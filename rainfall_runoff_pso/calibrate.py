@@ -1,9 +1,12 @@
 """
 calibrate.py — PSO-driven model calibration.
 
-Reads the raw data, splits it 70/30 (calibration / validation),
-builds an objective function that wraps the bucket model + NSE,
-runs PSO, and returns the calibrated parameters.
+Provides ``run_calibration(precip_train, obs_discharge_train)`` which:
+1. Defines the objective function (RMSE between simulated and observed).
+2. Wraps it for ParticleSwarmOptimizer (dict-based interface).
+3. Runs PSO with hyperparameters from config.py.
+4. Saves best parameters to results/calibrated_params.json.
+5. Returns (best_params dict, convergence history list).
 """
 
 import json
@@ -20,11 +23,16 @@ from config import (
     PSO_CONFIG,
     RAW_DATA_FILE,
     RESULTS_DIR,
+    CALIBRATED_PARAMS_FILE,
 )
 from model import simulate_runoff
 from pso import ParticleSwarmOptimizer
-from evaluate import nse
+from evaluate import rmse
 
+
+# =========================================================================
+# Data loading  (shared with main.py)
+# =========================================================================
 
 def load_and_split(
     filepath: str = RAW_DATA_FILE,
@@ -36,7 +44,8 @@ def load_and_split(
     Returns
     -------
     df_cal, df_val : pd.DataFrame
-        Calibration and validation subsets (contiguous, no shuffle).
+        Calibration (first ``cal_ratio`` %) and validation subsets.
+        No shuffling — split is purely temporal.
     """
     df = pd.read_csv(filepath, parse_dates=["Date"])
     df = df.dropna().reset_index(drop=True)
@@ -44,89 +53,62 @@ def load_and_split(
     return df.iloc[:split_idx].copy(), df.iloc[split_idx:].copy()
 
 
-def build_objective(precip_cal: np.ndarray, obs_cal: np.ndarray):
+# =========================================================================
+# Core calibration routine
+# =========================================================================
+
+def run_calibration(
+    precip_train: np.ndarray,
+    obs_discharge_train: np.ndarray,
+) -> tuple[dict, list[float]]:
     """
-    Return a closure that PSO can call:  objective(params_dict) → float.
+    Calibrate the rainfall-runoff model via PSO.
 
-    The objective function receives a **dict** ``{alpha, beta, k}``
-    (matching the ParticleSwarmOptimizer interface) and returns a
-    scalar cost = 1 − NSE.
-
-        - When NSE = 1 (perfect)  →  cost = 0
-        - When NSE = 0            →  cost = 1
-    """
-    def objective(params: dict) -> float:
-        sim = simulate_runoff(precip_cal, params)
-        score = nse(obs_cal, sim)
-        # Guard against NaN (e.g. all-zero observed)
-        if np.isnan(score):
-            return 1.0
-        return 1.0 - score
-    return objective
-
-
-def calibrate(verbose: bool = True) -> dict:
-    """
-    Run the full calibration pipeline.
+    Parameters
+    ----------
+    precip_train : np.ndarray
+        Precipitation for the calibration period (mm/day).
+    obs_discharge_train : np.ndarray
+        Observed discharge for the calibration period (m³/s).
 
     Returns
     -------
-    dict with keys:
-        best_params       — dict  {alpha, beta, k}
-        best_params_array — list  [alpha, beta, k]  (PARAM_NAMES order)
-        objective_value   — float (1 - NSE on calibration set)
-        nse_cal           — float (NSE on calibration set)
-        history           — list  (best cost per PSO iteration)
-        elapsed_seconds   — float
+    best_params : dict
+        ``{"alpha": float, "beta": float, "k": float}``
+    history : list[float]
+        Best RMSE cost at each PSO iteration.
     """
-    # ── Load & split ──────────────────────────────────────────────────
-    df_cal, _ = load_and_split()
-    precip_cal = df_cal["Precipitation_mm"].values
-    obs_cal    = df_cal["Observed_Discharge_m3s"].values
 
-    if verbose:
-        print(f"\n{'='*60}")
-        print(f" CALIBRATION  ({len(df_cal)} days)")
-        print(f"{'='*60}")
-        print(f" PSO config: {PSO_CONFIG}")
-        print(f" Bounds:     {MODEL_PARAM_BOUNDS}")
+    # ── Objective: RMSE between simulated and observed ────────────────
+    def objective(params: dict) -> float:
+        """PSO minimises this.  Lower RMSE = better fit."""
+        sim = simulate_runoff(precip_train, params)
+        return rmse(obs_discharge_train, sim)
 
-    # ── Build objective & run PSO ─────────────────────────────────────
-    objective = build_objective(precip_cal, obs_cal)
-
+    # ── Instantiate PSO ───────────────────────────────────────────────
     pso = ParticleSwarmOptimizer(
         objective_fn=objective,
         bounds=MODEL_PARAM_BOUNDS,
         **PSO_CONFIG,
     )
 
-    t0 = time.perf_counter()
+    # ── Run optimisation ──────────────────────────────────────────────
+    print(f"\n{'='*60}")
+    print(f" CALIBRATION  ({len(precip_train)} days)")
+    print(f"{'='*60}")
+    print(f" PSO config : {PSO_CONFIG}")
+    print(f" Bounds     : {MODEL_PARAM_BOUNDS}")
+    print()
+
     best_params, best_cost, history = pso.optimize()
-    elapsed = time.perf_counter() - t0
 
-    # ── Re-run model with best params for metrics ─────────────────────
-    sim_cal = simulate_runoff(precip_cal, best_params)
-    nse_cal = nse(obs_cal, sim_cal)
+    print(f"\n Best RMSE  : {best_cost:.6f}")
+    print(f" Best params: {best_params}")
 
-    result = {
-        "best_params":       best_params,
-        "best_params_array": [best_params[p] for p in PARAM_NAMES],
-        "objective_value":   best_cost,
-        "nse_cal":           nse_cal,
-        "history":           history,
-        "elapsed_seconds":   round(elapsed, 2),
-    }
-
-    # ── Persist to JSON ───────────────────────────────────────────────
+    # ── Save to JSON ──────────────────────────────────────────────────
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    json_path = os.path.join(RESULTS_DIR, "calibration_results.json")
-    with open(json_path, "w") as f:
-        json.dump(result, f, indent=2)
+    with open(CALIBRATED_PARAMS_FILE, "w") as f:
+        json.dump(best_params, f, indent=2)
+    print(f" Saved to   : {CALIBRATED_PARAMS_FILE}")
 
-    if verbose:
-        print(f"\n Calibrated params: {best_params}")
-        print(f" NSE (cal):  {nse_cal:.4f}")
-        print(f" Time:       {elapsed:.1f}s")
-        print(f" Saved to:   {json_path}")
-
-    return result
+    return best_params, history

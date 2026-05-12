@@ -60,6 +60,8 @@ DATA_DIR        = os.path.join(PROJECT_ROOT, "data")
 RAW_DATA_DIR    = os.path.join(DATA_DIR, "raw")
 RAW_DATA_FILE   = os.path.join(RAW_DATA_DIR, "data.csv")
 RESULTS_DIR     = os.path.join(PROJECT_ROOT, "results")
+FIGURES_DIR     = os.path.join(RESULTS_DIR, "figures")
+CALIBRATED_PARAMS_FILE = os.path.join(RESULTS_DIR, "calibrated_params.json")
 
 # ---------------------------------------------------------------------------
 # Train / test (calibration / validation) split
@@ -76,7 +78,7 @@ SYNTHETIC_START    = "2018-01-01"
 # ---------------------------------------------------------------------------
 # Visualisation settings
 # ---------------------------------------------------------------------------
-PLOT_DPI    = 150
+PLOT_DPI    = 300
 PLOT_STYLE  = "seaborn-v0_8-whitegrid"   # matplotlib style
 FIG_SIZE    = (14, 5)
 
@@ -85,3 +87,4 @@ FIG_SIZE    = (14, 5)
 # ---------------------------------------------------------------------------
 os.makedirs(RAW_DATA_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR,  exist_ok=True)
+os.makedirs(FIGURES_DIR,  exist_ok=True)
