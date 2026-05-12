@@ -37,7 +37,7 @@ from calibrate import run_calibration, load_and_split
 from predict import run_prediction
 from model import simulate_runoff
 from evaluate import rmse, nash_sutcliffe_efficiency, print_metrics
-from visualize import plot_all_results
+from visualize import plot_all_results, generate_workflow_diagram
 
 
 def _timer(label: str):
@@ -160,6 +160,9 @@ def main() -> None:
             pso_history=pso_history,
             split_idx=split_idx,
         )
+
+        # Workflow diagram
+        generate_workflow_diagram()
     timings["6. Plotting"] = t.elapsed
 
     # ==================================================================

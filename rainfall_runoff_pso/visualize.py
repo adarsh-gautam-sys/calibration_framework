@@ -156,3 +156,173 @@ def plot_all_results(
     print(f"  [plot] Saved results figure to {save_path}")
 
     return save_path
+
+
+# =========================================================================
+# Workflow diagram
+# =========================================================================
+
+def generate_workflow_diagram(save_path: str | None = None) -> str:
+    """
+    Create a clean flowchart-style workflow diagram using matplotlib patches.
+
+    Nodes
+    -----
+    Raw Environmental Data  ->  Preprocessing & Train/Val Split
+      -> Rainfall-Runoff Model (3 params)  <->  PSO Calibration Engine
+      -> Simulated Discharge               ->  Convergence History
+      -> Evaluation: RMSE + NSE
+      -> Prediction on Validation Set
+      -> Results & Visualisation
+
+    Returns
+    -------
+    str - path to saved diagram.
+    """
+    from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+
+    if save_path is None:
+        save_path = os.path.join(FIGURES_DIR, "workflow_diagram.png")
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(12, 14))
+    ax.set_xlim(0, 12)
+    ax.set_ylim(0, 14)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    # ── Style constants ───────────────────────────────────────────────
+    BOX_COLOR    = "#ffffff"
+    BORDER_COLOR = "#1a73e8"     # Google Blue
+    ARROW_COLOR  = "#424242"     # Dark grey
+    TITLE_COLOR  = "#1a237e"     # Deep indigo
+    TEXT_SIZE    = 10
+    BOX_W        = 3.8           # box width
+    BOX_H        = 0.7           # box height
+
+    # ── Title ─────────────────────────────────────────────────────────
+    ax.text(
+        6, 13.5,
+        "PSO Calibration Framework",
+        fontsize=18, fontweight="bold", color=TITLE_COLOR,
+        ha="center", va="center",
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="#e8eaf6",
+                  edgecolor=TITLE_COLOR, linewidth=1.5),
+    )
+    ax.text(
+        6, 12.9,
+        "Automated Rainfall-Runoff Prediction Pipeline",
+        fontsize=10, color="#616161", ha="center", va="center",
+        style="italic",
+    )
+
+    # ── Node definitions: (x_center, y_center, label) ─────────────────
+    #   Left column (x=3.8) = main pipeline
+    #   Right column (x=8.5) = PSO branch
+    nodes = {
+        "data":    (3.8, 12.0, "Raw Environmental Data"),
+        "preproc": (3.8, 10.8, "Preprocessing &\nTrain / Val Split"),
+        "model":   (3.8,  9.4, "Rainfall-Runoff Model\n(3 params: a, b, k)"),
+        "pso":     (8.5,  9.4, "PSO Calibration\nEngine"),
+        "sim":     (3.8,  7.8, "Simulated Discharge"),
+        "conv":    (8.5,  7.8, "Convergence History"),
+        "eval":    (3.8,  6.2, "Evaluation:\nRMSE + NSE"),
+        "pred":    (3.8,  4.6, "Prediction on\nValidation Set"),
+        "result":  (3.8,  3.0, "Results &\nVisualisation"),
+    }
+
+    # ── Draw boxes ────────────────────────────────────────────────────
+    box_rects = {}
+    for key, (cx, cy, label) in nodes.items():
+        x0 = cx - BOX_W / 2
+        y0 = cy - BOX_H / 2
+        rect = FancyBboxPatch(
+            (x0, y0), BOX_W, BOX_H,
+            boxstyle="round,pad=0.15",
+            facecolor=BOX_COLOR,
+            edgecolor=BORDER_COLOR,
+            linewidth=1.8,
+        )
+        ax.add_patch(rect)
+        ax.text(cx, cy, label, fontsize=TEXT_SIZE, ha="center", va="center",
+                color="#212121", fontweight="medium")
+        box_rects[key] = (cx, cy)
+
+    # ── Arrow helper ──────────────────────────────────────────────────
+    def add_arrow(src_key, dst_key, style="-|>", color=ARROW_COLOR,
+                  connectionstyle="arc3,rad=0", bidirectional=False):
+        sx, sy = box_rects[src_key]
+        dx, dy = box_rects[dst_key]
+
+        # Adjust start/end to box edges
+        if sy > dy:        # going down
+            sy -= BOX_H / 2
+            dy += BOX_H / 2
+        elif sy < dy:      # going up
+            sy += BOX_H / 2
+            dy -= BOX_H / 2
+        if sx < dx:        # going right
+            sx += BOX_W / 2
+            dx -= BOX_W / 2
+        elif sx > dx:      # going left
+            sx -= BOX_W / 2
+            dx += BOX_W / 2
+
+        arrow = FancyArrowPatch(
+            (sx, sy), (dx, dy),
+            arrowstyle=style,
+            mutation_scale=15,
+            color=color,
+            linewidth=1.5,
+            connectionstyle=connectionstyle,
+        )
+        ax.add_patch(arrow)
+
+        if bidirectional:
+            arrow2 = FancyArrowPatch(
+                (dx, dy), (sx, sy),
+                arrowstyle=style,
+                mutation_scale=15,
+                color=color,
+                linewidth=1.5,
+                connectionstyle=connectionstyle,
+            )
+            ax.add_patch(arrow2)
+
+    # ── Vertical main pipeline arrows ─────────────────────────────────
+    add_arrow("data",    "preproc")
+    add_arrow("preproc", "model")
+    add_arrow("model",   "sim")
+    add_arrow("sim",     "eval")
+    add_arrow("eval",    "pred")
+    add_arrow("pred",    "result")
+
+    # ── Horizontal / branch arrows ────────────────────────────────────
+    # Model <-> PSO (bidirectional)
+    add_arrow("model", "pso", bidirectional=True)
+
+    # PSO -> Convergence History (down)
+    add_arrow("pso", "conv")
+
+    # ── Legend annotation ─────────────────────────────────────────────
+    ax.text(
+        6, 1.8,
+        "Pipeline: data/download.py -> calibrate.py -> predict.py -> evaluate.py -> visualize.py",
+        fontsize=8, color="#9e9e9e", ha="center", va="center",
+        style="italic",
+    )
+    ax.text(
+        6, 1.3,
+        "Orchestrated by main.py  |  All parameters defined in config.py",
+        fontsize=8, color="#9e9e9e", ha="center", va="center",
+        style="italic",
+    )
+
+    # ── Save ──────────────────────────────────────────────────────────
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=PLOT_DPI, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"  [plot] Saved workflow diagram to {save_path}")
+
+    return save_path
+
