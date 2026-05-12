@@ -15,15 +15,14 @@ import pandas as pd
 
 from config import (
     CALIBRATION_RATIO,
-    PARAM_LOWER,
-    PARAM_UPPER,
+    MODEL_PARAM_BOUNDS,
     PARAM_NAMES,
     PSO_CONFIG,
     RAW_DATA_FILE,
     RESULTS_DIR,
 )
-from model import run_model, params_array_to_dict
-from pso import PSO
+from model import simulate_runoff
+from pso import ParticleSwarmOptimizer
 from evaluate import nse
 
 
@@ -47,16 +46,22 @@ def load_and_split(
 
 def build_objective(precip_cal: np.ndarray, obs_cal: np.ndarray):
     """
-    Return a closure that PSO can call:  objective(params) → float.
+    Return a closure that PSO can call:  objective(params_dict) → float.
 
-    Minimisation target = 1 − NSE.
-        - When NSE = 1 (perfect)  → objective = 0
-        - When NSE = 0            → objective = 1
+    The objective function receives a **dict** ``{alpha, beta, k}``
+    (matching the ParticleSwarmOptimizer interface) and returns a
+    scalar cost = 1 − NSE.
+
+        - When NSE = 1 (perfect)  →  cost = 0
+        - When NSE = 0            →  cost = 1
     """
-    def objective(params: np.ndarray) -> float:
-        sim, _ = run_model(params, precip_cal)
+    def objective(params: dict) -> float:
+        sim = simulate_runoff(precip_cal, params)
         score = nse(obs_cal, sim)
-        return 1.0 - score          # minimise → best is 0
+        # Guard against NaN (e.g. all-zero observed)
+        if np.isnan(score):
+            return 1.0
+        return 1.0 - score
     return objective
 
 
@@ -67,12 +72,11 @@ def calibrate(verbose: bool = True) -> dict:
     Returns
     -------
     dict with keys:
-        best_params       — dict {alpha, beta, k}
-        best_params_array — list  [alpha, beta, k]
+        best_params       — dict  {alpha, beta, k}
+        best_params_array — list  [alpha, beta, k]  (PARAM_NAMES order)
         objective_value   — float (1 - NSE on calibration set)
         nse_cal           — float (NSE on calibration set)
-        history           — list  (best obj per PSO iteration)
-        final_storage     — float (S at end of cal period, for val continuity)
+        history           — list  (best cost per PSO iteration)
         elapsed_seconds   — float
     """
     # ── Load & split ──────────────────────────────────────────────────
@@ -85,33 +89,31 @@ def calibrate(verbose: bool = True) -> dict:
         print(f" CALIBRATION  ({len(df_cal)} days)")
         print(f"{'='*60}")
         print(f" PSO config: {PSO_CONFIG}")
-        print(f" Bounds:     {dict(zip(PARAM_NAMES, zip(PARAM_LOWER, PARAM_UPPER)))}")
+        print(f" Bounds:     {MODEL_PARAM_BOUNDS}")
 
     # ── Build objective & run PSO ─────────────────────────────────────
     objective = build_objective(precip_cal, obs_cal)
 
-    pso = PSO(
+    pso = ParticleSwarmOptimizer(
         objective_fn=objective,
-        lower_bounds=np.array(PARAM_LOWER),
-        upper_bounds=np.array(PARAM_UPPER),
+        bounds=MODEL_PARAM_BOUNDS,
         **PSO_CONFIG,
     )
 
     t0 = time.perf_counter()
-    best_params, best_score, history = pso.optimize(verbose=verbose)
+    best_params, best_cost, history = pso.optimize()
     elapsed = time.perf_counter() - t0
 
-    # ── Re-run model with best params to get final storage ────────────
-    sim_cal, final_storage = run_model(best_params, precip_cal)
+    # ── Re-run model with best params for metrics ─────────────────────
+    sim_cal = simulate_runoff(precip_cal, best_params)
     nse_cal = nse(obs_cal, sim_cal)
 
     result = {
-        "best_params":       params_array_to_dict(best_params),
-        "best_params_array": best_params.tolist(),
-        "objective_value":   best_score,
+        "best_params":       best_params,
+        "best_params_array": [best_params[p] for p in PARAM_NAMES],
+        "objective_value":   best_cost,
         "nse_cal":           nse_cal,
         "history":           history,
-        "final_storage":     final_storage,
         "elapsed_seconds":   round(elapsed, 2),
     }
 
@@ -122,7 +124,7 @@ def calibrate(verbose: bool = True) -> dict:
         json.dump(result, f, indent=2)
 
     if verbose:
-        print(f"\n Calibrated params: {result['best_params']}")
+        print(f"\n Calibrated params: {best_params}")
         print(f" NSE (cal):  {nse_cal:.4f}")
         print(f" Time:       {elapsed:.1f}s")
         print(f" Saved to:   {json_path}")

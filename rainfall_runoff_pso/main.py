@@ -17,7 +17,6 @@ Usage
 """
 
 import os
-import sys
 import numpy as np
 import pandas as pd
 
@@ -26,12 +25,11 @@ from config import (
     RESULTS_DIR,
     TRUE_PARAMS,
     PARAM_NAMES,
-    CALIBRATION_RATIO,
 )
 from data.download import download_data
 from calibrate import calibrate, load_and_split
 from predict import predict
-from model import run_model
+from model import simulate_runoff
 from evaluate import evaluate_all
 from visualize import (
     plot_hydrograph,
@@ -94,8 +92,8 @@ def main() -> None:
     dates_val  = pd.to_datetime(val_result["dates_val"])
 
     # Re-run model on cal period for cal plots
-    best_params = np.array(cal_result["best_params_array"])
-    sim_cal, _ = run_model(best_params, precip_cal)
+    best_params = cal_result["best_params"]          # dict
+    sim_cal = simulate_runoff(precip_cal, best_params)
     metrics_cal = evaluate_all(obs_cal, sim_cal)
     metrics_val = val_result["metrics_val"]
 
@@ -145,7 +143,7 @@ def main() -> None:
     print(" RESULTS SUMMARY")
     print("=" * 60)
     print(f"\n  True parameters:       {TRUE_PARAMS}")
-    print(f"  Calibrated parameters: {cal_result['best_params']}")
+    print(f"  Calibrated parameters: {best_params}")
     print(f"\n  {'Metric':<8s}  {'Calibration':>12s}  {'Validation':>12s}")
     print(f"  {'─'*8}  {'─'*12}  {'─'*12}")
     for key in ["RMSE", "NSE", "PBIAS"]:

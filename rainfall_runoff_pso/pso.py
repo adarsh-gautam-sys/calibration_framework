@@ -1,13 +1,11 @@
 """
 pso.py — Particle Swarm Optimization (PSO) from scratch.
 
-Implements the canonical PSO with:
-    - Inertia weight (w)        for exploration–exploitation balance
-    - Cognitive coefficient (c1) for personal-best attraction
-    - Social coefficient (c2)    for global-best attraction
+Implements the canonical PSO algorithm with inertia weight.  No external
+optimisation libraries are used — everything is built on top of NumPy.
 
-Velocity update:
-    v_i(t+1) = w · v_i(t)
+Velocity update  (per particle *i*, per dimension):
+    v_i(t+1) = w  · v_i(t)
              + c1 · r1 · (pbest_i − x_i(t))
              + c2 · r2 · (gbest   − x_i(t))
 
@@ -22,137 +20,172 @@ from __future__ import annotations
 
 import numpy as np
 
-from config import RANDOM_SEED
+from config import RANDOM_SEED, PARAM_NAMES
 
 
-class PSO:
-    """Particle Swarm Optimiser."""
+class ParticleSwarmOptimizer:
+    """Full-featured PSO that minimises an arbitrary objective function.
+
+    Parameters
+    ----------
+    objective_fn : callable(params: dict) -> float
+        Function to **minimise**.  Receives a dict ``{name: value}``
+        and returns a scalar cost.  Lower is better.
+    bounds : dict
+        ``{param_name: [lower, upper]}`` — search-space boundaries.
+        Example: ``{"alpha": [0.01, 0.5], "beta": [1.0, 3.0], "k": [0.01, 0.99]}``
+    n_particles  : int   — swarm size  (default 30).
+    n_iterations : int   — maximum iterations  (default 100).
+    w            : float — inertia weight  (default 0.7).
+    c1           : float — cognitive (personal-best) coefficient  (default 1.5).
+    c2           : float — social (global-best) coefficient  (default 1.5).
+    """
 
     def __init__(
         self,
         objective_fn,
-        lower_bounds: np.ndarray,
-        upper_bounds: np.ndarray,
+        bounds: dict,
         n_particles: int = 30,
         n_iterations: int = 100,
         w: float = 0.7,
         c1: float = 1.5,
         c2: float = 1.5,
-        seed: int = RANDOM_SEED,
     ) -> None:
-        """
-        Parameters
-        ----------
-        objective_fn : callable(params: ndarray) -> float
-            Function to **minimise**.  Lower is better.
-        lower_bounds, upper_bounds : ndarray, shape (n_dims,)
-            Search-space boundaries for each parameter.
-        n_particles  : int   — swarm size.
-        n_iterations : int   — maximum iterations.
-        w            : float — inertia weight.
-        c1           : float — cognitive (personal-best) coefficient.
-        c2           : float — social (global-best) coefficient.
-        seed         : int   — RNG seed for reproducibility.
-        """
         self.objective_fn = objective_fn
-        self.lower = np.asarray(lower_bounds, dtype=float)
-        self.upper = np.asarray(upper_bounds, dtype=float)
-        self.n_dims = len(self.lower)
+        self.bounds = bounds
         self.n_particles = n_particles
         self.n_iterations = n_iterations
         self.w = w
         self.c1 = c1
         self.c2 = c2
-        self.rng = np.random.default_rng(seed)
 
-        # ── Swarm state ──────────────────────────────────────────────
-        self.positions: np.ndarray | None = None
-        self.velocities: np.ndarray | None = None
+        # Ordered param names — consistent with config.PARAM_NAMES
+        self.param_names: list[str] = list(bounds.keys())
+        self.n_dims = len(self.param_names)
+
+        # Numeric bound arrays (shape: (n_dims,))
+        self.lower = np.array([bounds[p][0] for p in self.param_names])
+        self.upper = np.array([bounds[p][1] for p in self.param_names])
+
+        # Reproducible RNG
+        self.rng = np.random.default_rng(RANDOM_SEED)
+
+        # ── Swarm state (initialised in optimize()) ──────────────────
+        self.positions:      np.ndarray | None = None   # (n_particles, n_dims)
+        self.velocities:     np.ndarray | None = None   # (n_particles, n_dims)
         self.pbest_positions: np.ndarray | None = None
-        self.pbest_scores: np.ndarray | None = None
+        self.pbest_costs:    np.ndarray | None = None
         self.gbest_position: np.ndarray | None = None
-        self.gbest_score: float = np.inf
-        self.history: list[float] = []       # best score per iteration
+        self.gbest_cost:     float = np.inf
+        self.history:        list[float] = []           # best cost per iteration
 
     # -----------------------------------------------------------------
-    # Initialisation
+    # Internal helpers
     # -----------------------------------------------------------------
+
+    def _array_to_dict(self, arr: np.ndarray) -> dict:
+        """Convert a position vector to a ``{name: value}`` dict."""
+        return {name: float(arr[i]) for i, name in enumerate(self.param_names)}
+
+    def _evaluate_particle(self, position: np.ndarray) -> float:
+        """Evaluate objective for a single particle's position."""
+        return self.objective_fn(self._array_to_dict(position))
+
     def _initialize(self) -> None:
         """Seed particles uniformly within bounds; velocities start at 0."""
+        # Positions: uniform random in [lower, upper]
         self.positions = self.rng.uniform(
             self.lower, self.upper, size=(self.n_particles, self.n_dims)
         )
-        self.velocities = np.zeros_like(self.positions)
+        # Velocities: start at zero
+        self.velocities = np.zeros((self.n_particles, self.n_dims))
 
-        # Evaluate initial population
-        scores = np.array([self.objective_fn(p) for p in self.positions])
+        # Evaluate every particle
+        costs = np.array([
+            self._evaluate_particle(self.positions[i])
+            for i in range(self.n_particles)
+        ])
 
+        # Personal bests = initial positions
         self.pbest_positions = self.positions.copy()
-        self.pbest_scores = scores.copy()
+        self.pbest_costs = costs.copy()
 
-        best_idx = int(np.argmin(scores))
+        # Global best = best of the initial swarm
+        best_idx = int(np.argmin(costs))
         self.gbest_position = self.positions[best_idx].copy()
-        self.gbest_score = scores[best_idx]
+        self.gbest_cost = float(costs[best_idx])
 
-    # -----------------------------------------------------------------
-    # Core update step
-    # -----------------------------------------------------------------
     def _step(self) -> None:
-        """Perform one full PSO iteration (velocity → position → evaluate)."""
+        """Execute one full PSO iteration: velocity → position → evaluate."""
+        # Random matrices for stochastic component
         r1 = self.rng.random((self.n_particles, self.n_dims))
         r2 = self.rng.random((self.n_particles, self.n_dims))
 
-        # Velocity update
+        # ── Velocity update (vectorised across all particles) ─────────
         cognitive = self.c1 * r1 * (self.pbest_positions - self.positions)
         social    = self.c2 * r2 * (self.gbest_position  - self.positions)
         self.velocities = self.w * self.velocities + cognitive + social
 
-        # Position update + clamping
+        # ── Position update + clamping to bounds ──────────────────────
         self.positions = self.positions + self.velocities
         self.positions = np.clip(self.positions, self.lower, self.upper)
 
-        # Evaluate
-        scores = np.array([self.objective_fn(p) for p in self.positions])
+        # ── Evaluate all particles ────────────────────────────────────
+        costs = np.array([
+            self._evaluate_particle(self.positions[i])
+            for i in range(self.n_particles)
+        ])
 
-        # Update personal bests
-        improved = scores < self.pbest_scores
+        # ── Update personal bests ─────────────────────────────────────
+        improved = costs < self.pbest_costs
         self.pbest_positions[improved] = self.positions[improved]
-        self.pbest_scores[improved] = scores[improved]
+        self.pbest_costs[improved] = costs[improved]
 
-        # Update global best
-        best_idx = int(np.argmin(self.pbest_scores))
-        if self.pbest_scores[best_idx] < self.gbest_score:
+        # ── Update global best ────────────────────────────────────────
+        best_idx = int(np.argmin(self.pbest_costs))
+        if self.pbest_costs[best_idx] < self.gbest_cost:
             self.gbest_position = self.pbest_positions[best_idx].copy()
-            self.gbest_score = self.pbest_scores[best_idx]
+            self.gbest_cost = float(self.pbest_costs[best_idx])
 
     # -----------------------------------------------------------------
-    # Main optimisation loop
+    # Public API
     # -----------------------------------------------------------------
-    def optimize(self, verbose: bool = True) -> tuple[np.ndarray, float, list[float]]:
+
+    def optimize(self) -> tuple[dict, float, list[float]]:
         """
-        Run the PSO loop.
+        Run the PSO optimisation loop.
 
         Returns
         -------
-        best_params : ndarray, shape (n_dims,)
-        best_score  : float
-        history     : list[float]   — best objective at each iteration
+        best_params : dict
+            ``{param_name: best_value}`` for each parameter.
+        best_cost : float
+            Lowest objective value found.
+        history : list[float]
+            Best objective value recorded at each iteration (length =
+            n_iterations + 1, including initial evaluation).
         """
         self._initialize()
-        self.history = [self.gbest_score]
+        self.history = [self.gbest_cost]
 
         for it in range(1, self.n_iterations + 1):
             self._step()
-            self.history.append(self.gbest_score)
+            self.history.append(self.gbest_cost)
 
-            if verbose and it % 10 == 0:
-                print(f"  PSO iter {it:>4d}/{self.n_iterations}  |  "
-                      f"best obj = {self.gbest_score:.6f}")
+            # ── Progress logging every 10 iterations ──────────────────
+            if it % 10 == 0:
+                print(
+                    f"Iteration {it}/{self.n_iterations} "
+                    f"| Best Cost: {self.gbest_cost:.6f}"
+                )
 
-            # Early stopping: objective ≈ 0  →  NSE ≈ 1
-            if self.gbest_score < 1e-4:
-                if verbose:
-                    print(f"  Early stop at iter {it} (obj < 1e-4)")
+            # ── Early stopping: cost ≈ 0 means NSE ≈ 1 ───────────────
+            if self.gbest_cost < 1e-6:
+                print(
+                    f"Iteration {it}/{self.n_iterations} "
+                    f"| Best Cost: {self.gbest_cost:.6f}  ← early stop"
+                )
                 break
 
-        return self.gbest_position.copy(), self.gbest_score, self.history
+        best_params = self._array_to_dict(self.gbest_position)
+        return best_params, self.gbest_cost, self.history

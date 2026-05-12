@@ -11,8 +11,8 @@ import os
 import numpy as np
 import pandas as pd
 
-from config import RAW_DATA_FILE, RESULTS_DIR, CALIBRATION_RATIO
-from model import run_model
+from config import RESULTS_DIR
+from model import simulate_runoff
 from evaluate import evaluate_all
 from calibrate import load_and_split
 
@@ -27,17 +27,17 @@ def predict(
     Parameters
     ----------
     cal_result : dict or None
-        Output of calibrate.calibrate().  If None, loads from
-        results/calibration_results.json.
+        Output of ``calibrate.calibrate()``.  If None, loads from
+        ``results/calibration_results.json``.
 
     Returns
     -------
     dict with keys:
-        sim_val          — list   (simulated discharge on val period)
-        obs_val          — list   (observed discharge on val period)
-        dates_val        — list   (ISO date strings)
-        metrics_val      — dict   {RMSE, NSE, PBIAS}
-        best_params      — dict   {alpha, beta, k}
+        sim_val     — list   (simulated discharge on val period)
+        obs_val     — list   (observed discharge on val period)
+        dates_val   — list   (ISO date strings)
+        metrics_val — dict   {RMSE, NSE, PBIAS}
+        best_params — dict   {alpha, beta, k}
     """
     # ── Load calibration results if not passed directly ───────────────
     if cal_result is None:
@@ -45,8 +45,7 @@ def predict(
         with open(json_path) as f:
             cal_result = json.load(f)
 
-    best_params   = np.array(cal_result["best_params_array"])
-    final_storage = cal_result.get("final_storage", 50.0)
+    best_params = cal_result["best_params"]       # dict {alpha, beta, k}
 
     # ── Load validation data ──────────────────────────────────────────
     _, df_val = load_and_split()
@@ -54,8 +53,8 @@ def predict(
     obs_val    = df_val["Observed_Discharge_m3s"].values
     dates_val  = df_val["Date"].dt.strftime("%Y-%m-%d").tolist()
 
-    # ── Run model (with storage continuity from calibration) ──────────
-    sim_val, _ = run_model(best_params, precip_val, initial_storage=final_storage)
+    # ── Run model with calibrated parameters ──────────────────────────
+    sim_val = simulate_runoff(precip_val, best_params)
 
     # ── Evaluate ──────────────────────────────────────────────────────
     metrics = evaluate_all(obs_val, sim_val)
@@ -65,7 +64,7 @@ def predict(
         "obs_val":     obs_val.tolist(),
         "dates_val":   dates_val,
         "metrics_val": metrics,
-        "best_params": cal_result["best_params"],
+        "best_params": best_params,
     }
 
     # ── Persist ───────────────────────────────────────────────────────
@@ -79,7 +78,7 @@ def predict(
         print(f"\n{'='*60}")
         print(f" VALIDATION  ({len(df_val)} days)")
         print(f"{'='*60}")
-        print(f" Params: {cal_result['best_params']}")
+        print(f" Params: {best_params}")
         for k, v in metrics.items():
             print(f" {k:>6s}: {v:.4f}")
         print(f" Saved to: {out_path}")

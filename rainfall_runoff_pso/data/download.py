@@ -145,21 +145,10 @@ def _generate_synthetic() -> pd.DataFrame:
     precip = np.round(precip, 2)
 
     # ── Run bucket model with TRUE parameters to get "observed" Q ─────
-    alpha = TRUE_PARAMS["alpha"]
-    beta  = TRUE_PARAMS["beta"]
-    k     = TRUE_PARAMS["k"]
-
-    S = 50.0                        # initial storage (mm)
-    Q = np.zeros(n)
-    for t in range(n):
-        # Surface runoff (non-linear)
-        Q_surface = alpha * (precip[t] ** beta) if precip[t] > 0 else 0.0
-        # Baseflow recession
-        Q_base = k * S
-        Q[t] = Q_surface + Q_base
-        # Update storage
-        S = S + precip[t] - Q[t]
-        S = max(S, 0.0)
+    #   Uses the same simulate_runoff() that PSO will calibrate against,
+    #   ensuring the synthetic data is perfectly consistent with the model.
+    from model import simulate_runoff
+    Q = simulate_runoff(precip, TRUE_PARAMS)
 
     # ── Add realistic measurement noise ───────────────────────────────
     noise_sigma = 0.02 * np.mean(Q)
