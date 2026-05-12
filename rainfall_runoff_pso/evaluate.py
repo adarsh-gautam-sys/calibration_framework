@@ -78,7 +78,7 @@ def print_metrics(observed: np.ndarray, simulated: np.ndarray) -> dict:
     metrics = {"RMSE": r, "NSE": n}
 
     print(f"\n  {'Metric':<8s}  {'Value':>12s}")
-    print(f"  {'─' * 8}  {'─' * 12}")
+    print(f"  {'-' * 8}  {'-' * 12}")
     print(f"  {'RMSE':<8s}  {r:>12.4f}")
     print(f"  {'NSE':<8s}  {n:>12.4f}")
 

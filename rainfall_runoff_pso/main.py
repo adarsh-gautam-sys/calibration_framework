@@ -50,7 +50,7 @@ def _timer(label: str):
             return self
         def __exit__(self, *_):
             self.elapsed = time.time() - self._t0
-            print(f"  ⏱  {label} completed in {self.elapsed:.2f}s")
+            print(f"  >> {label} completed in {self.elapsed:.2f}s")
     return _T()
 
 
@@ -94,9 +94,9 @@ def main() -> None:
         obs_val    = df_val["Observed_Discharge_m3s"].values
 
         print(f"  Calibration : {len(df_cal)} days  "
-              f"({df_cal['Date'].iloc[0].date()} → {df_cal['Date'].iloc[-1].date()})")
+              f"({df_cal['Date'].iloc[0].date()} -> {df_cal['Date'].iloc[-1].date()})")
         print(f"  Validation  : {len(df_val)} days  "
-              f"({df_val['Date'].iloc[0].date()} → {df_val['Date'].iloc[-1].date()})")
+              f"({df_val['Date'].iloc[0].date()} -> {df_val['Date'].iloc[-1].date()})")
     timings["2. Data splitting"] = t.elapsed
 
     # ==================================================================
@@ -175,7 +175,7 @@ def main() -> None:
 
     # Parameter recovery accuracy
     print(f"\n  {'Parameter':<10s}  {'True':>8s}  {'Calibrated':>10s}  {'Error %':>8s}")
-    print(f"  {'─'*10}  {'─'*8}  {'─'*10}  {'─'*8}")
+    print(f"  {'-'*10}  {'-'*8}  {'-'*10}  {'-'*8}")
     for name in PARAM_NAMES:
         true_val = TRUE_PARAMS[name]
         cal_val  = best_params[name]
@@ -184,7 +184,7 @@ def main() -> None:
 
     # Metrics comparison
     print(f"\n  {'Metric':<8s}  {'Calibration':>12s}  {'Validation':>12s}")
-    print(f"  {'─'*8}  {'─'*12}  {'─'*12}")
+    print(f"  {'-'*8}  {'-'*12}  {'-'*12}")
     for key in ["RMSE", "NSE"]:
         c = metrics_cal.get(key, float("nan"))
         v = metrics_val.get(key, float("nan"))
@@ -193,10 +193,10 @@ def main() -> None:
     # Timing summary
     total = sum(timings.values())
     print(f"\n  {'Step':<25s}  {'Time (s)':>10s}")
-    print(f"  {'─'*25}  {'─'*10}")
+    print(f"  {'-'*25}  {'-'*10}")
     for step, sec in timings.items():
         print(f"  {step:<25s}  {sec:>10.2f}")
-    print(f"  {'─'*25}  {'─'*10}")
+    print(f"  {'-'*25}  {'-'*10}")
     print(f"  {'TOTAL':<25s}  {total:>10.2f}")
 
     print(f"\n  Results saved to: {RESULTS_DIR}")

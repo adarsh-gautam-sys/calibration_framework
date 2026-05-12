@@ -162,7 +162,7 @@ def _generate_synthetic() -> pd.DataFrame:
         "Observed_Discharge_m3s": Q,
     })
     print(f"[download] Synthetic data generated: {df.shape[0]} rows, "
-          f"true params α={alpha}, β={beta}, k={k}")
+          f"true params alpha={TRUE_PARAMS['alpha']}, beta={TRUE_PARAMS['beta']}, k={TRUE_PARAMS['k']}")
     return df
 
 

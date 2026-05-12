@@ -183,7 +183,7 @@ class ParticleSwarmOptimizer:
             if self.gbest_cost < 1e-6:
                 print(
                     f"Iteration {it}/{self.n_iterations} "
-                    f"| Best Cost: {self.gbest_cost:.6f}  ← early stop"
+                    f"| Best Cost: {self.gbest_cost:.6f}  <-- early stop"
                 )
                 break
 
